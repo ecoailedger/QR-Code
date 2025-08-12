@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Custom QR Code Generator</title>
+  <style>
+    :root{
+      --bg:#0c0f13; --panel:#12161c; --ink:#e7edf3; --muted:#9aa6b2; --accent:#3b82f6;
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0; font-family:ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial; background:var(--bg); color:var(--ink); display:grid; grid-template-rows:auto 1fr auto; gap:12px; min-height:100vh}
+    header{padding:16px 18px}
+    header h1{margin:0; font-size:clamp(18px,3vw,24px)}
+    header p{margin:4px 0 0; color:var(--muted); font-size:13.5px}
+
+    main{display:grid; grid-template-columns:360px 1fr; gap:16px; padding:0 16px 16px}
+    @media (max-width: 900px){ main{grid-template-columns: 1fr;} }
+
+    .panel{background:var(--panel); border:1px solid #1a2028; border-radius:14px; padding:14px; display:flex; flex-direction:column; gap:12px}
+    .row{display:grid; grid-template-columns:120px 1fr; align-items:center; gap:10px}
+    .row label{font-size:13px; color:var(--muted)}
+    .row textarea, .row input[type="text"], select{
+      width:100%; background:#0e1217; color:var(--ink); border:1px solid #1f2731; border-radius:10px; padding:10px 12px; font-size:14px; outline:none
+    }
+    .row textarea{min-height:88px; resize:vertical}
+    .row input[type="color"]{width:100%; height:40px; border:none; background:transparent}
+    .row input[type="range"]{width:100%}
+    .buttons{display:flex; gap:8px; justify-content:flex-end}
+    button, a.button{cursor:pointer; appearance:none; border:none; border-radius:10px; padding:10px 14px; font-weight:600; font-size:14px}
+    .primary{background:#1f6feb; color:white}
+    .ghost{background:transparent; color:var(--ink); border:1px solid #29313b}
+    button:focus-visible, a.button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+    .preview{background:#0f1318; border:1px solid #1a2028; border-radius:14px; min-height:min(85vh,900px); display:grid; place-items:center; position:relative}
+    .preview-inner{padding:24px; width:100%; height:100%; display:grid; place-items:center}
+    canvas#qrCanvas{width:min(88vmin,840px); height:min(88vmin,840px); background:#fff; border-radius:12px}
+    .hint{position:absolute; bottom:10px; right:14px; color:var(--muted); font-size:12px}
+    footer{padding:0 18px 16px; color:var(--muted); font-size:12.5px}
+    .kbd{border:1px solid #2a313b; background:#0f1318; padding:2px 6px; border-radius:6px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Custom QR Code Generator</h1>
+    <p>Generate a QR from text or a URL. Customize colours. Download as PNG.</p>
+  </header>
+
+  <main>
+    <section class="panel" aria-label="Controls">
+      <div class="row">
+        <label for="text">Text / URL</label>
+        <textarea id="text" placeholder="Paste text or a link…">https://example.com/</textarea>
+      </div>
+      <div class="row">
+        <label for="size">Size</label>
+        <input id="size" type="range" min="256" max="1024" step="64" value="640" />
+      </div>
+      <div class="row">
+        <label for="fg">Foreground</label>
+        <input id="fg" type="color" value="#111827" />
+      </div>
+      <div class="row">
+        <label for="bg">Background</label>
+        <input id="bg" type="color" value="#ffffff" />
+      </div>
+      <div class="row">
+        <label for="ec">Error correction</label>
+        <select id="ec">
+          <option value="L">Low (L)</option>
+          <option value="M" selected>Medium (M)</option>
+          <option value="Q">Quartile (Q)</option>
+          <option value="H">High (H)</option>
+        </select>
+      </div>
+      <div class="buttons">
+        <button class="ghost" id="random">Random colours</button>
+        <button class="primary" id="generate">Generate</button>
+        <a class="button ghost" id="download" download="qr.png">Download PNG</a>
+      </div>
+    </section>
+
+    <section class="preview" aria-label="Preview">
+      <div class="preview-inner">
+        <canvas id="qrCanvas" width="640" height="640" aria-label="QR preview" role="img"></canvas>
+      </div>
+      <div class="hint">Tip: Press <span class="kbd">G</span> to regenerate, <span class="kbd">D</span> to download.</div>
+    </section>
+  </main>
+
+  <footer>
+    Single-file app. Uses a public QR web API to render, then paints to canvas for downloading locally.
+  </footer>
+
+  <script>
+    // --- Simple QR via api.qrserver.com then paint onto canvas for download ---
+    const txt = document.getElementById('text');
+    const size = document.getElementById('size');
+    const fg = document.getElementById('fg');
+    const bg = document.getElementById('bg');
+    const ec = document.getElementById('ec');
+    const canvas = document.getElementById('qrCanvas');
+    const ctx = canvas.getContext('2d');
+    const dl = document.getElementById('download');
+
+    function hexToRgb(hex){
+      const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+      return m? {r:parseInt(m[1],16), g:parseInt(m[2],16), b:parseInt(m[3],16)} : {r:0,g:0,b:0};
+    }
+
+    function setCanvasSize(px){ canvas.width = px; canvas.height = px; }
+
+    function imgUrl(){
+      const px = parseInt(size.value,10);
+      const f = fg.value.replace('#','');
+      const b = bg.value.replace('#','');
+      const data = encodeURIComponent(txt.value.trim());
+      const level = ec.value || 'M';
+      // API docs: https://goqr.me/api/
+      return `https://api.qrserver.com/v1/create-qr-code/?size=${px}x${px}&data=${data}&color=${f.slice(0,2)}-${f.slice(2,4)}-${f.slice(4,6)}&bgcolor=${b.slice(0,2)}-${b.slice(2,4)}-${b.slice(4,6)}&qzone=1&ecc=${level}`;
+    }
+
+    async function generate(){
+      const px = parseInt(size.value,10);
+      setCanvasSize(px);
+      // Fill background first for clean PNG
+      const bgr = hexToRgb(bg.value); ctx.fillStyle = `rgb(${bgr.r} ${bgr.g} ${bgr.b})`; ctx.fillRect(0,0,px,px);
+      // Load remote PNG then draw (CORS-enabled service)
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.src = imgUrl();
+      await img.decode().catch(()=>{});
+      ctx.drawImage(img,0,0,px,px);
+      // Update download link
+      dl.href = canvas.toDataURL('image/png');
+    }
+
+    function randomise(){
+      const rand = () => '#'+Math.floor(Math.random()*0xffffff).toString(16).padStart(6,'0');
+      fg.value = '#111827'; // keep QR dark for scan reliability
+      bg.value = rand();
+    }
+
+    document.getElementById('generate').addEventListener('click', generate);
+    document.getElementById('random').addEventListener('click', ()=>{ randomise(); generate(); });
+    dl.addEventListener('click', (e)=>{ if(!dl.href) { e.preventDefault(); generate(); } });
+
+    window.addEventListener('keydown', (e)=>{
+      if(e.key.toLowerCase()==='g') generate();
+      if(e.key.toLowerCase()==='d') dl.click();
+    });
+
+    // initial render
+    generate();
+  </script>
+</body>
+</html>
